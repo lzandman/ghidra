@@ -180,7 +180,7 @@ public class Objc2TypeMetadata extends AbstractObjcTypeMetadata {
 			}
 		}
 		catch (IOException e) {
-			log("Failed to parse Objective-C categeory from section '" + section + "'", e);
+			log("Failed to parse Objective-C category from section '" + section + "'", e);
 		}
 	}
 
