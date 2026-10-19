@@ -787,6 +787,8 @@ Varnode *RulePullsubMulti::buildSubpiece(Varnode *basevn,uint4 outsize,uint4 shi
       uint4 skipleft = shift;
       for(int4 i=joinrec->numPieces()-1;i>=0;--i) { // Move from least significant to most
 	const VarnodeData &vdata(joinrec->getPiece(i));
+	if (vdata.space->getType() == IPTR_CONSTANT)
+	  throw LowlevelError("Join space padding is propagating");
 	if (skipleft >= vdata.size) {
 	  skipleft -= vdata.size;
 	}
@@ -6810,8 +6812,6 @@ int4 RulePtraddUndo::applyOp(PcodeOp *op,Funcdata &data)
   return 1;
 }
 
-const int4 RulePtrsubUndo::DEPTH_LIMIT = 8;
-
 /// \class RulePtrsubUndo
 /// \brief Remove PTRSUB operations with mismatched data-type information
 ///
@@ -6831,9 +6831,9 @@ void RulePtrsubUndo::getOpList(vector<uint4> &oplist) const
 /// formed with INT_MULT.
 /// \param vn is the given root Varnode of the additive tree
 /// \param multiplier will hold the biggest constant multiplier or 0, if no multiplier is present
-/// \param maxLevel is the maximum depth to search in the tree
+/// \param termCount holds the number of Varnodes traversed (for the entire expression)
 /// \return the sum of all constants in the additive expression
-int8 RulePtrsubUndo::getConstOffsetBack(Varnode *vn,int8 &multiplier,int4 maxLevel)
+int8 RulePtrsubUndo::getConstOffsetBack(Varnode *vn,int8 &multiplier,int4 &termCount)
 
 {
   multiplier = 0;
@@ -6842,17 +6842,17 @@ int8 RulePtrsubUndo::getConstOffsetBack(Varnode *vn,int8 &multiplier,int4 maxLev
     return vn->getOffset();
   if (!vn->isWritten())
     return 0;
-  maxLevel -= 1;
-  if (maxLevel < 0)
+  termCount += 1;
+  if (termCount > MAX_TERMS)	// Stop recursing if term count exceeded
     return 0;
   PcodeOp *op = vn->getDef();
   OpCode opc = op->code();
   int8 retval = 0;
   if (opc == CPUI_INT_ADD) {
-    retval += getConstOffsetBack(op->getIn(0),submultiplier,maxLevel);
+    retval += getConstOffsetBack(op->getIn(0),submultiplier,termCount);
     if (submultiplier > multiplier)
       multiplier = submultiplier;
-    retval += getConstOffsetBack(op->getIn(1), submultiplier, maxLevel);
+    retval += getConstOffsetBack(op->getIn(1), submultiplier, termCount);
     if (submultiplier > multiplier)
       multiplier = submultiplier;
   }
@@ -6860,7 +6860,7 @@ int8 RulePtrsubUndo::getConstOffsetBack(Varnode *vn,int8 &multiplier,int4 maxLev
     Varnode *cvn = op->getIn(1);
     if (!cvn->isConstant()) return 0;
     multiplier = cvn->getOffset();
-    getConstOffsetBack(op->getIn(0), submultiplier, maxLevel);
+    getConstOffsetBack(op->getIn(0), submultiplier, termCount);
     if (submultiplier > 0)
       multiplier *= submultiplier;		// Only contribute to the multiplier
   }
@@ -6886,7 +6886,12 @@ int8 RulePtrsubUndo::getExtraOffset(PcodeOp *op,int8 &multiplier)
     OpCode opc = op->code();
     if (opc == CPUI_INT_ADD) {
       int4 slot = op->getSlot(outvn);
-      extra += getConstOffsetBack(op->getIn(1-slot),submultiplier,DEPTH_LIMIT);	// Get any constants from other input
+      int4 termCount = 0;
+      extra += getConstOffsetBack(op->getIn(1-slot),submultiplier,termCount);	// Get any constants from other input
+      if (termCount > MAX_TERMS) {
+	multiplier = 0;
+	return 0;		// Completely disable extra offset calculation
+      }
       if (submultiplier > multiplier)
 	multiplier = submultiplier;
     }
@@ -6899,7 +6904,12 @@ int8 RulePtrsubUndo::getExtraOffset(PcodeOp *op,int8 &multiplier)
       Varnode *invn = op->getIn(1);
       if (invn->isConstant())					// Only contribute to the extra
 	extra += ptraddmult * (int8)invn->getOffset();		// if the index is constant
-      getConstOffsetBack(invn,submultiplier,DEPTH_LIMIT);	// otherwise just contribute to multiplier
+      int4 termCount = 0;
+      getConstOffsetBack(invn,submultiplier,termCount);	// otherwise just contribute to multiplier
+      if (termCount > MAX_TERMS) {
+	multiplier = 0;		// Completely disable extra offset calculation
+	return 0;
+      }
       if (submultiplier != 0)
 	ptraddmult *= submultiplier;
       if (ptraddmult > multiplier)
@@ -6921,10 +6931,9 @@ int8 RulePtrsubUndo::getExtraOffset(PcodeOp *op,int8 &multiplier)
 /// a COPY.  The INT_ADD must only contribute to the root expression.
 /// \param op is the given root PcodeOp
 /// \param slot is the input slot to walk back from
-/// \param maxLevel is the maximum depth to recurse
 /// \param data is the function containing the expression
 /// \return the sum of all constants that are removed
-int8 RulePtrsubUndo::removeLocalAddRecurse(PcodeOp *op,int4 slot,int4 maxLevel,Funcdata &data)
+int8 RulePtrsubUndo::removeLocalAddRecurse(PcodeOp *op,int4 slot,Funcdata &data)
 
 {
   Varnode *vn = op->getIn(slot);
@@ -6932,9 +6941,6 @@ int8 RulePtrsubUndo::removeLocalAddRecurse(PcodeOp *op,int4 slot,int4 maxLevel,F
     return 0;
   if (vn->loneDescend() != op)
     return 0;				// Varnode must not be used anywhere else
-  maxLevel -= 1;
-  if (maxLevel < 0)
-    return 0;
   op = vn->getDef();
   int8 retval = 0;
   if (op->code() == CPUI_INT_ADD) {
@@ -6944,8 +6950,8 @@ int8 RulePtrsubUndo::removeLocalAddRecurse(PcodeOp *op,int4 slot,int4 maxLevel,F
       data.opSetOpcode(op, CPUI_COPY);
     }
     else {
-      retval += removeLocalAddRecurse(op, 0, maxLevel, data);
-      retval += removeLocalAddRecurse(op, 1, maxLevel, data);
+      retval += removeLocalAddRecurse(op, 0, data);
+      retval += removeLocalAddRecurse(op, 1, data);
     }
   }
   return retval;
@@ -6975,7 +6981,7 @@ int8 RulePtrsubUndo::removeLocalAdds(Varnode *vn,Funcdata &data)
 	data.opSetOpcode(op, CPUI_COPY);
       }
       else {
-	extra += removeLocalAddRecurse(op,1-slot,DEPTH_LIMIT, data);	// Get any constants from other input
+	extra += removeLocalAddRecurse(op,1-slot, data);	// Get any constants from other input
       }
     }
     else if (opc == CPUI_PTRSUB) {
@@ -6998,7 +7004,7 @@ int8 RulePtrsubUndo::removeLocalAdds(Varnode *vn,Funcdata &data)
       }
       else {
 	data.opUndoPtradd(op, false);
-	extra += removeLocalAddRecurse(op,1,DEPTH_LIMIT, data);
+	extra += removeLocalAddRecurse(op,1, data);
       }
     }
     else {
@@ -7356,7 +7362,7 @@ Datatype *RulePieceStructure::determineDatatype(Varnode *vn,int4 &baseOffset)
 
   if (ct->getSize() != vn->getSize()) {			// vn is a partial
     SymbolEntry *entry = vn->getSymbolEntry();
-    if (entry->isDynamic())
+    if (!entry->isMapEntry())
       return (Datatype *)0;
     baseOffset = vn->getAddr().overlap(0,((MapEntry *)entry)->getAddr(),ct->getSize());
     if (baseOffset < 0)
@@ -8408,6 +8414,7 @@ int4 RuleSignForm::applyOp(PcodeOp *op,Funcdata &data)
   if (sextop->code() != CPUI_INT_SEXT)
     return 0;
   a = sextop->getIn(0);
+  if (a->getSize() != op->getOut()->getSize()) return 0;
   int4 c = op->getIn(1)->getOffset();
   if (c < a->getSize()) return 0;
   if (a->isFree()) return 0;
@@ -8959,7 +8966,7 @@ int4 RuleSegment::applyOp(PcodeOp *op,Funcdata &data)
     data.opSetOpcode(op,CPUI_COPY);
     return 1;
   }
-  else if (segdef->hasFarPointerSupport()) {
+  else if (segdef->hasFarPointerSupport() && segdef->isConcatenation()) {
     // If the hi and lo pieces come from a contigouous source
     if (!contiguous_test(vn1,vn2)) return 0;
     Varnode *whole = findContiguousWhole(data,vn1,vn2);
@@ -10686,8 +10693,8 @@ int4 RuleLzcountShiftBool::applyOp(PcodeOp *op,Funcdata &data)
 /// \brief Convert floating-point \e sign bit manipulation into FLOAT_ABS or FLOAT_NEG
 ///
 /// Transform floating-point specific operations
-///   -- `x & 0x7fffffff  =>  ABS(f)`
-///   -- 'x ^ 0x80000000  =>  -f`
+///   - `x & 0x7fffffff  =>  ABS(f)`
+///   - `x ^ 0x80000000  =>  -f`
 ///
 /// A Varnode is determined to be floating-point by participation in other floating-point operations,
 /// not based on the data-type of the Varnode.
@@ -10774,8 +10781,8 @@ int4 RuleFloatSignCleanup::applyOp(PcodeOp *op,Funcdata &data)
 /// \class RuleOrCompare
 /// \brief Simplify INT_OR in comparisons with 0.
 ///
-/// `(V | W) == 0` => '(V == 0) && (W == 0)'
-/// `(V | W) != 0` => '(V != 0) || (W != 0)'
+///   - `(V | W) == 0 => (V == 0) && (W == 0)`
+///   - `(V | W) != 0 => (V != 0) || (W != 0)`
 void RuleOrCompare::getOpList(vector<uint4> &oplist) const
 
 {
