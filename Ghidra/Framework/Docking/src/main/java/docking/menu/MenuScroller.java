@@ -17,6 +17,7 @@ package docking.menu;
 
 import java.awt.*;
 import java.awt.event.*;
+import java.awt.geom.Path2D;
 
 import javax.swing.*;
 import javax.swing.event.*;
@@ -40,8 +41,7 @@ public class MenuScroller {
 
 	private static final String CLIENT_PROPERTY_KEY = MenuScroller.class.getName();
 	private static final int HOVER_SCROLL_DELAY_MS = 60;
-	private static final int ARROW_HEIGHT = 14;
-	private static final int ARROW_SIZE = 4;
+	private static final int MIN_ARROW_ROW_HEIGHT = 8;
 
 	private final JPopupMenu popup;
 	private final ScrollArrow upArrow = new ScrollArrow(-1);
@@ -391,14 +391,29 @@ public class MenuScroller {
 			});
 		}
 
+		/**
+		 * {@return the height of the arrow row}  It follows the menu font, so that the arrows grow
+		 * with the font size; display scaling is applied by Java itself.
+		 */
+		private int getRowHeight() {
+			Font font = UIManager.getFont("MenuItem.font");
+			if (font == null) {
+				font = popup.getFont();
+			}
+			if (font == null) {
+				return MIN_ARROW_ROW_HEIGHT;
+			}
+			return Math.max(MIN_ARROW_ROW_HEIGHT, getFontMetrics(font).getAscent());
+		}
+
 		@Override
 		public Dimension getPreferredSize() {
-			return new Dimension(0, ARROW_HEIGHT);
+			return new Dimension(0, getRowHeight());
 		}
 
 		@Override
 		public Dimension getMaximumSize() {
-			return new Dimension(Short.MAX_VALUE, ARROW_HEIGHT);
+			return new Dimension(Short.MAX_VALUE, getRowHeight());
 		}
 
 		@Override
@@ -414,12 +429,18 @@ public class MenuScroller {
 				g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
 					RenderingHints.VALUE_ANTIALIAS_ON);
 				g2.setColor(color);
-				int cx = getWidth() / 2;
-				int cy = getHeight() / 2;
-				int tip = cy + direction * ARROW_SIZE / 2;
-				int base = cy - direction * ARROW_SIZE / 2;
-				g2.fillPolygon(new int[] { cx - ARROW_SIZE, cx + ARROW_SIZE, cx },
-					new int[] { base, base, tip }, 3);
+				// a vector shape in fractional coordinates stays sharp at every display scale
+				double halfWidth = getHeight() / 3.0;
+				double cx = getWidth() / 2.0;
+				double cy = getHeight() / 2.0;
+				double tip = cy + direction * halfWidth / 2;
+				double base = cy - direction * halfWidth / 2;
+				Path2D.Double arrow = new Path2D.Double();
+				arrow.moveTo(cx - halfWidth, base);
+				arrow.lineTo(cx + halfWidth, base);
+				arrow.lineTo(cx, tip);
+				arrow.closePath();
+				g2.fill(arrow);
 			}
 			finally {
 				g2.dispose();
