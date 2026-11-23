@@ -41,8 +41,10 @@ import generic.theme.ThemeManager;
  * <p>
  * Menus that fit on the screen are not changed.  The FlatLaf look and feels scroll long menus
  * themselves, so this class does nothing for them.
+ * <p>
+ * Use {@link GMenu} and {@link GPopupMenu}, which install it.
  */
-public class MenuScroller {
+class MenuScroller {
 
 	private static final String CLIENT_PROPERTY_KEY = MenuScroller.class.getName();
 	private static final int HOVER_SCROLL_DELAY_MS = 60;
@@ -78,7 +80,7 @@ public class MenuScroller {
 	 * once has no further effect.
 	 * @param popup the popup menu
 	 */
-	public static void install(JPopupMenu popup) {
+	static void install(JPopupMenu popup) {
 		if (popup.getClientProperty(CLIENT_PROPERTY_KEY) != null) {
 			return;
 		}

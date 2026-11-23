@@ -201,8 +201,7 @@ public class MenuManager implements ManagedMenuItem {
 	 */
 	public JMenu getMenu() {
 		if (menu == null) {
-			menu = new JMenu(name);
-			MenuScroller.install(menu.getPopupMenu());
+			menu = new GMenu(name);
 			if (mnemonicKey != MenuData.NO_MNEMONIC) {
 				menu.setMnemonic(mnemonicKey);
 			}
@@ -267,8 +266,7 @@ public class MenuManager implements ManagedMenuItem {
 	 */
 	public JPopupMenu getPopupMenu() {
 		if (popupMenu == null) {
-			popupMenu = new JPopupMenu(name);
-			MenuScroller.install(popupMenu);
+			popupMenu = new GPopupMenu(name);
 
 			List<ManagedMenuItem> list = new ArrayList<>(managedMenuItems);
 			Collections.sort(list, comparator);
