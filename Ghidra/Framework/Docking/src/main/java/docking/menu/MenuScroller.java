@@ -81,6 +81,13 @@ class MenuScroller {
 	private int viewHeight;
 	private int maxViewHeight;
 
+	/**
+	 * The bounds this class last gave the menu window; null until the menu grows.  On macOS a
+	 * window reports a new frame later, so {@link Window#getBounds()} can return an earlier frame
+	 * right after {@link Window#setBounds(Rectangle)}, and growing from it would lose a step.
+	 */
+	private Rectangle windowBounds;
+
 	/** True if the menu opens above its requested location, so that it starts at the top */
 	private boolean moveToScreenTop;
 
@@ -152,6 +159,7 @@ class MenuScroller {
 		maxViewHeight = Math.max(view, screenBottom - screenTop - insets.top - insets.bottom);
 		first = 0;
 		wheelRemainder = 0;
+		windowBounds = null;
 
 		// the window of a light weight popup cannot grow past the window it is in
 		wasLightWeightPopupEnabled = popup.isLightWeightPopupEnabled();
@@ -409,11 +417,12 @@ class MenuScroller {
 			maxViewHeight = viewHeight;
 			return;
 		}
-		Rectangle bounds = window.getBounds();
+		Rectangle bounds = windowBounds == null ? window.getBounds() : new Rectangle(windowBounds);
 		int down = Math.min(delta, Math.max(0, screenBottom - (bounds.y + bounds.height)));
 		bounds.y -= delta - down;
 		bounds.height += delta;
 		viewHeight += delta;
+		windowBounds = new Rectangle(bounds);
 		window.setBounds(bounds);
 		window.validate();
 	}
