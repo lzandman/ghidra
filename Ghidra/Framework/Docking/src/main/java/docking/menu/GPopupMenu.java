@@ -15,12 +15,16 @@
  */
 package docking.menu;
 
+import java.awt.Point;
+
 import javax.swing.JPopupMenu;
 
 /**
  * A drop-in replacement for {@link JPopupMenu} that scrolls when it is taller than the screen.
  */
 public class GPopupMenu extends JPopupMenu {
+
+	private Point requestedLocation;
 
 	public GPopupMenu() {
 		super();
@@ -30,5 +34,19 @@ public class GPopupMenu extends JPopupMenu {
 	public GPopupMenu(String label) {
 		super(label);
 		MenuScroller.install(this);
+	}
+
+	@Override
+	public void setLocation(int x, int y) {
+		requestedLocation = new Point(x, y);
+		super.setLocation(x, y);
+	}
+
+	/**
+	 * {@return the screen location last asked for, before Swing moves the menu onto the screen;
+	 * null if none}
+	 */
+	Point getRequestedLocation() {
+		return requestedLocation == null ? null : new Point(requestedLocation);
 	}
 }
